@@ -30,7 +30,7 @@ Uses streaming_core.py for parsing Kiro stream into unified KiroEvent objects.
 
 import json
 import time
-from typing import TYPE_CHECKING, AsyncGenerator, Callable, Awaitable, Optional
+from typing import TYPE_CHECKING, AsyncGenerator, Callable, Awaitable, Dict, Optional
 
 import httpx
 from fastapi import HTTPException
@@ -38,6 +38,7 @@ from loguru import logger
 
 from kiro.parsers import parse_bracket_tool_calls, deduplicate_tool_calls
 from kiro.utils import generate_completion_id
+from kiro.converters_core import restore_tool_name
 from kiro.config import (
     FIRST_TOKEN_TIMEOUT,
     FIRST_TOKEN_MAX_RETRIES,
@@ -78,7 +79,8 @@ async def stream_kiro_to_openai_internal(
     first_token_timeout: float = FIRST_TOKEN_TIMEOUT,
     request_messages: Optional[list] = None,
     request_tools: Optional[list] = None,
-    conversation_id: Optional[str] = None
+    conversation_id: Optional[str] = None,
+    tool_name_mapping: Optional[Dict[str, str]] = None
 ) -> AsyncGenerator[str, None]:
     """
     Internal generator for converting Kiro stream to OpenAI format.
@@ -99,7 +101,8 @@ async def stream_kiro_to_openai_internal(
         request_messages: Original request messages (for fallback token counting)
         request_tools: Original request tools (for fallback token counting)
         conversation_id: Stable conversation ID for truncation recovery (optional)
-        conversation_id: Stable conversation ID for truncation recovery (optional)
+        tool_name_mapping: Mapping of shortened_name → original_name for restoring
+                          original tool names in responses (optional)
     
     Yields:
         Strings in SSE format: "data: {...}\\n\\n" or "data: [DONE]\\n\\n"
@@ -336,6 +339,10 @@ async def stream_kiro_to_openai_internal(
                 tool_name = func.get("name") or ""
                 tool_args = func.get("arguments") or "{}"
                 
+                # Restore original tool name if it was shortened for Kiro API
+                if tool_name_mapping:
+                    tool_name = restore_tool_name(tool_name, tool_name_mapping)
+                
                 logger.debug(f"Tool call [{idx}] '{tool_name}': id={tc.get('id')}, args_length={len(tool_args)}")
                 
                 indexed_tc = {
@@ -454,7 +461,8 @@ async def stream_kiro_to_openai(
     model_cache: "ModelInfoCache",
     auth_manager: "KiroAuthManager",
     request_messages: Optional[list] = None,
-    request_tools: Optional[list] = None
+    request_tools: Optional[list] = None,
+    tool_name_mapping: Optional[Dict[str, str]] = None
 ) -> AsyncGenerator[str, None]:
     """
     Generator for converting Kiro stream to OpenAI format.
@@ -470,6 +478,8 @@ async def stream_kiro_to_openai(
         auth_manager: Authentication manager
         request_messages: Original request messages (for fallback token counting)
         request_tools: Original request tools (for fallback token counting)
+        tool_name_mapping: Mapping of shortened_name → original_name for restoring
+                          original tool names in responses (optional)
     
     Yields:
         Strings in SSE format: "data: {...}\\n\\n" or "data: [DONE]\\n\\n"
@@ -477,7 +487,8 @@ async def stream_kiro_to_openai(
     async for chunk in stream_kiro_to_openai_internal(
         client, response, model, model_cache, auth_manager,
         request_messages=request_messages,
-        request_tools=request_tools
+        request_tools=request_tools,
+        tool_name_mapping=tool_name_mapping
     ):
         yield chunk
 
@@ -492,7 +503,8 @@ async def stream_with_first_token_retry(
     max_retries: int = FIRST_TOKEN_MAX_RETRIES,
     first_token_timeout: float = FIRST_TOKEN_TIMEOUT,
     request_messages: Optional[list] = None,
-    request_tools: Optional[list] = None
+    request_tools: Optional[list] = None,
+    tool_name_mapping: Optional[Dict[str, str]] = None
 ) -> AsyncGenerator[str, None]:
     """
     Streaming with automatic retry on first token timeout.
@@ -517,6 +529,8 @@ async def stream_with_first_token_retry(
         first_token_timeout: First token wait timeout (seconds)
         request_messages: Original request messages (for fallback token counting)
         request_tools: Original request tools (for fallback token counting)
+        tool_name_mapping: Mapping of shortened_name → original_name for restoring
+                          original tool names in responses (optional)
     
     Yields:
         Strings in SSE format
@@ -557,7 +571,8 @@ async def stream_with_first_token_retry(
             auth_manager,
             first_token_timeout=first_token_timeout,
             request_messages=request_messages,
-            request_tools=request_tools
+            request_tools=request_tools,
+            tool_name_mapping=tool_name_mapping
         ):
             yield chunk
     
@@ -580,7 +595,8 @@ async def collect_stream_response(
     model_cache: "ModelInfoCache",
     auth_manager: "KiroAuthManager",
     request_messages: Optional[list] = None,
-    request_tools: Optional[list] = None
+    request_tools: Optional[list] = None,
+    tool_name_mapping: Optional[Dict[str, str]] = None
 ) -> dict:
     """
     Collect full response from streaming stream.
@@ -596,6 +612,8 @@ async def collect_stream_response(
         auth_manager: Authentication manager
         request_messages: Original request messages (for fallback token counting)
         request_tools: Original request tools (for fallback token counting)
+        tool_name_mapping: Mapping of shortened_name → original_name for restoring
+                          original tool names in responses (optional)
     
     Returns:
         Dictionary with full response in OpenAI chat.completion format
@@ -614,7 +632,8 @@ async def collect_stream_response(
         model_cache,
         auth_manager,
         request_messages=request_messages,
-        request_tools=request_tools
+        request_tools=request_tools,
+        tool_name_mapping=tool_name_mapping
     ):
         if not chunk_str.startswith("data:"):
             continue

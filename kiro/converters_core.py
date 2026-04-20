@@ -30,6 +30,7 @@ The core layer provides a unified interface that API-specific adapters use
 to convert their formats to Kiro API format.
 """
 
+import hashlib
 import json
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
@@ -38,6 +39,7 @@ from loguru import logger
 
 from kiro.config import (
     TOOL_DESCRIPTION_MAX_LENGTH,
+    MAX_TOOL_NAME_LENGTH,
     FAKE_REASONING_ENABLED,
     FAKE_REASONING_MAX_TOKENS,
     FAKE_REASONING_BUDGET_CAP,
@@ -126,9 +128,13 @@ class KiroPayloadResult:
     Attributes:
         payload: The complete Kiro API payload
         tool_documentation: Documentation for tools with long descriptions (to add to system prompt)
+        tool_name_mapping: Mapping of shortened tool names to original names.
+                          Used to restore original names in streaming responses.
+                          Empty dict when no names were shortened.
     """
     payload: Dict[str, Any]
     tool_documentation: str = ""
+    tool_name_mapping: Dict[str, str] = field(default_factory=dict)
 
 
 # ==================================================================================================
@@ -557,46 +563,118 @@ def process_tools_with_long_descriptions(
     return processed_tools if processed_tools else None, tool_documentation
 
 
-def validate_tool_names(tools: Optional[List[UnifiedTool]]) -> None:
+def shorten_tool_name(name: str, max_length: int = MAX_TOOL_NAME_LENGTH) -> str:
     """
-    Validates tool names against Kiro API 64-character limit.
+    Shortens a single tool name to fit within the max length limit.
     
-    Logs WARNING for each problematic tool and raises ValueError
-    with complete list of violations.
+    Uses a deterministic hash suffix to preserve uniqueness:
+    the name is truncated and the last 8 characters are replaced
+    with a short hash derived from the original full name.
     
     Args:
-        tools: List of tools to validate
+        name: Original tool name
+        max_length: Maximum allowed length (default: MAX_TOOL_NAME_LENGTH)
     
-    Raises:
-        ValueError: If any tool name exceeds 64 characters
+    Returns:
+        Shortened name if original exceeds max_length, otherwise original name unchanged
     
     Example:
-        >>> validate_tool_names([UnifiedTool(name="short_name", description="test")])
-        # No error
-        >>> validate_tool_names([UnifiedTool(name="a" * 70, description="test")])
-        # Raises ValueError with detailed message
+        >>> shorten_tool_name("short_name")
+        'short_name'
+        >>> len(shorten_tool_name("a" * 100)) <= 64
+        True
+    """
+    if len(name) <= max_length:
+        return name
+    
+    # 8-char hex hash from the full original name for uniqueness
+    hash_suffix = hashlib.md5(name.encode("utf-8")).hexdigest()[:8]
+    # Truncate prefix, leave room for underscore + hash
+    prefix_length = max_length - len(hash_suffix) - 1  # -1 for underscore separator
+    return name[:prefix_length] + "_" + hash_suffix
+
+
+def shorten_tool_names(
+    tools: Optional[List[UnifiedTool]],
+) -> Tuple[Optional[List[UnifiedTool]], Dict[str, str]]:
+    """
+    Shortens tool names that exceed Kiro API's 64-character limit.
+    
+    Instead of rejecting requests with long tool names, this function
+    transparently shortens them using a deterministic hash suffix and
+    returns a mapping so responses can be translated back to original names.
+    
+    Args:
+        tools: List of tools to process
+    
+    Returns:
+        Tuple of:
+        - List of tools with shortened names (or original list if nothing changed)
+        - Dict mapping shortened_name → original_name (empty if no names were shortened)
+    
+    Example:
+        >>> tools = [UnifiedTool(name="a" * 70, description="test")]
+        >>> shortened, mapping = shorten_tool_names(tools)
+        >>> len(shortened[0].name) <= 64
+        True
+        >>> mapping[shortened[0].name] == "a" * 70
+        True
     """
     if not tools:
-        return
+        return tools, {}
     
-    problematic_tools = []
+    mapping: Dict[str, str] = {}
+    any_shortened = False
+    result_tools: List[UnifiedTool] = []
+    
     for tool in tools:
-        if len(tool.name) > 64:
-            problematic_tools.append((tool.name, len(tool.name)))
+        short_name = shorten_tool_name(tool.name)
+        if short_name != tool.name:
+            any_shortened = True
+            mapping[short_name] = tool.name
+            logger.info(
+                f"Tool name shortened: '{tool.name}' ({len(tool.name)} chars) → "
+                f"'{short_name}' ({len(short_name)} chars)"
+            )
+            result_tools.append(UnifiedTool(
+                name=short_name,
+                description=tool.description,
+                input_schema=tool.input_schema,
+            ))
+        else:
+            result_tools.append(tool)
     
-    if problematic_tools:
-        # Build detailed error message for client (no logging here - routes will log)
-        tool_list = "\n".join([
-            f"  - '{name}' ({length} characters)"
-            for name, length in problematic_tools
-        ])
-        
-        raise ValueError(
-            f"Tool name(s) exceed Kiro API limit of 64 characters:\n"
-            f"{tool_list}\n\n"
-            f"Solution: Use shorter tool names (max 64 characters).\n"
-            f"Example: 'get_user_data' instead of 'get_authenticated_user_profile_data_with_extended_information_about_it'"
+    if any_shortened:
+        logger.info(
+            f"Shortened {len(mapping)} tool name(s) to fit Kiro API "
+            f"{MAX_TOOL_NAME_LENGTH}-character limit"
         )
+    
+    return result_tools if result_tools else None, mapping
+
+
+def restore_tool_name(name: str, tool_name_mapping: Dict[str, str]) -> str:
+    """
+    Restores an original tool name from a potentially shortened name.
+    
+    Used in streaming responses to translate shortened tool names
+    back to the original names that the client expects.
+    
+    Args:
+        name: Tool name from Kiro API response (may be shortened)
+        tool_name_mapping: Mapping of shortened_name → original_name
+    
+    Returns:
+        Original tool name if it was shortened, otherwise the name unchanged
+    
+    Example:
+        >>> mapping = {"mcp__GitHub__check_if_a_pers_abcd1234": "mcp__GitHub__check_if_a_person_is_followed"}
+        >>> restore_tool_name("mcp__GitHub__check_if_a_pers_abcd1234", mapping)
+        'mcp__GitHub__check_if_a_person_is_followed'
+        >>> restore_tool_name("short_name", mapping)
+        'short_name'
+    """
+    return tool_name_mapping.get(name, name)
 
 
 def convert_tools_to_kiro_format(tools: Optional[List[UnifiedTool]]) -> List[Dict[str, Any]]:
@@ -1399,6 +1477,38 @@ def build_kiro_history(messages: List[UnifiedMessage], model_id: str) -> List[Di
     return history
 
 
+def _apply_tool_name_mapping_to_history(
+    history: List[Dict[str, Any]],
+    tool_name_mapping: Dict[str, str],
+) -> None:
+    """
+    Applies tool name shortening to history entries in-place.
+    
+    When tool names are shortened for the tool definitions, the same
+    shortening must be applied to toolUses in assistant messages within
+    the conversation history. Otherwise Kiro API may reject the request
+    because tool names in toolUses don't match any defined tool.
+    
+    Args:
+        history: List of history entries (modified in-place)
+        tool_name_mapping: Mapping of shortened_name → original_name
+    """
+    # Build reverse lookup: original_name → shortened_name
+    original_to_short = {original: short for short, original in tool_name_mapping.items()}
+    
+    for entry in history:
+        assistant_msg = entry.get("assistantResponseMessage")
+        if not assistant_msg:
+            continue
+        tool_uses = assistant_msg.get("toolUses")
+        if not tool_uses:
+            continue
+        for tool_use in tool_uses:
+            original_name = tool_use.get("name", "")
+            if original_name in original_to_short:
+                tool_use["name"] = original_to_short[original_name]
+
+
 # ==================================================================================================
 # Main Payload Building
 # ==================================================================================================
@@ -1436,8 +1546,9 @@ def build_kiro_payload(
     # Process tools with long descriptions
     processed_tools, tool_documentation = process_tools_with_long_descriptions(tools)
     
-    # Validate tool names against Kiro API 64-character limit
-    validate_tool_names(processed_tools)
+    # Shorten tool names that exceed Kiro API 64-character limit
+    # Returns mapping of shortened_name → original_name for response translation
+    processed_tools, tool_name_mapping = shorten_tool_names(processed_tools)
     
     # Add tool documentation to system prompt if present
     full_system_prompt = system_prompt
@@ -1494,6 +1605,11 @@ def build_kiro_payload(
             first_msg.content = f"{full_system_prompt}\n\n{original_content}"
     
     history = build_kiro_history(history_messages, model_id)
+    
+    # Apply tool name shortening to history entries
+    # Tool names in assistant toolUses must match the shortened tool definitions
+    if tool_name_mapping:
+        _apply_tool_name_mapping_to_history(history, tool_name_mapping)
     
     # Current message (the last one)
     current_message = merged_messages[-1]
@@ -1595,4 +1711,8 @@ def build_kiro_payload(
                 f"({stats.original_bytes} -> {stats.final_bytes} bytes)"
             )
 
-    return KiroPayloadResult(payload=payload, tool_documentation=tool_documentation)
+    return KiroPayloadResult(
+        payload=payload,
+        tool_documentation=tool_documentation,
+        tool_name_mapping=tool_name_mapping,
+    )

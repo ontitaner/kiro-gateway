@@ -24,7 +24,7 @@ This module is an adapter layer that converts Anthropic-specific formats
 to the unified format used by converters_core.py.
 """
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from loguru import logger
 
@@ -428,7 +428,7 @@ def extract_thinking_config_from_anthropic(request: AnthropicMessagesRequest) ->
 
 def anthropic_to_kiro(
     request: AnthropicMessagesRequest, conversation_id: str, profile_arn: str
-) -> dict:
+) -> Tuple[dict, Dict[str, str]]:
     """
     Converts Anthropic Messages API request to Kiro API payload.
 
@@ -445,7 +445,9 @@ def anthropic_to_kiro(
         profile_arn: AWS CodeWhisperer profile ARN
 
     Returns:
-        Payload dictionary for POST request to Kiro API
+        Tuple of:
+        - Payload dictionary for POST request to Kiro API
+        - Tool name mapping (shortened_name → original_name), empty dict if no shortening
 
     Raises:
         ValueError: If there are no messages to send
@@ -485,4 +487,4 @@ def anthropic_to_kiro(
         thinking_config=thinking_config,
     )
 
-    return result.payload
+    return result.payload, result.tool_name_mapping

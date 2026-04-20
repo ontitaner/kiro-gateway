@@ -48,6 +48,7 @@ from kiro.streaming_core import (
     stream_with_first_token_retry,
 )
 from kiro.tokenizer import count_tokens, estimate_request_tokens
+from kiro.converters_core import restore_tool_name
 from kiro.parsers import parse_bracket_tool_calls, deduplicate_tool_calls
 from kiro.config import FIRST_TOKEN_TIMEOUT, FIRST_TOKEN_MAX_RETRIES, FAKE_REASONING_HANDLING
 
@@ -135,7 +136,8 @@ async def stream_kiro_to_anthropic(
     request_messages: Optional[list] = None,
     request_tools: Optional[list] = None,
     request_system: Optional[Any] = None,
-    conversation_id: Optional[str] = None
+    conversation_id: Optional[str] = None,
+    tool_name_mapping: Optional[Dict[str, str]] = None
 ) -> AsyncGenerator[str, None]:
     """
     Generator for converting Kiro stream to Anthropic SSE format.
@@ -153,6 +155,8 @@ async def stream_kiro_to_anthropic(
         request_tools: Original request tools (for token counting)
         request_system: Original system prompt (for token counting)
         conversation_id: Stable conversation ID for truncation recovery (optional)
+        tool_name_mapping: Mapping of shortened_name → original_name for restoring
+                          original tool names in responses (optional)
     
     Yields:
         Strings in Anthropic SSE format
@@ -346,6 +350,10 @@ async def stream_kiro_to_anthropic(
                 tool_id = tool.get("id") or f"toolu_{uuid.uuid4().hex[:24]}"
                 tool_name = tool.get("function", {}).get("name", "") or tool.get("name", "")
                 tool_input = tool.get("function", {}).get("arguments", {}) or tool.get("input", {})
+                
+                # Restore original tool name if it was shortened for Kiro API
+                if tool_name_mapping:
+                    tool_name = restore_tool_name(tool_name, tool_name_mapping)
                 
                 # ==============================================================================
                 # WebSearch Support - Path B: MCP Tool Emulation (Streaming Interception)
@@ -552,6 +560,10 @@ async def stream_kiro_to_anthropic(
                 tool_name = tc.get("function", {}).get("name", "")
                 tool_input = tc.get("function", {}).get("arguments", {})
                 
+                # Restore original tool name if it was shortened for Kiro API
+                if tool_name_mapping:
+                    tool_name = restore_tool_name(tool_name, tool_name_mapping)
+                
                 if isinstance(tool_input, str):
                     try:
                         tool_input = json.loads(tool_input)
@@ -725,7 +737,8 @@ async def collect_anthropic_response(
     auth_manager: "KiroAuthManager",
     request_messages: Optional[list] = None,
     request_tools: Optional[list] = None,
-    request_system: Optional[Any] = None
+    request_system: Optional[Any] = None,
+    tool_name_mapping: Optional[Dict[str, str]] = None
 ) -> dict:
     """
     Collect full response from Kiro stream in Anthropic format.
@@ -740,6 +753,8 @@ async def collect_anthropic_response(
         request_messages: Original request messages (for token counting)
         request_tools: Original request tools (for token counting)
         request_system: Original system prompt (for token counting)
+        tool_name_mapping: Mapping of shortened_name → original_name for restoring
+                          original tool names in responses (optional)
     
     Returns:
         Dictionary with full response in Anthropic Messages format
@@ -789,6 +804,10 @@ async def collect_anthropic_response(
         tool_id = tc.get("id") or f"toolu_{uuid.uuid4().hex[:24]}"
         tool_name = tc.get("function", {}).get("name", "") or tc.get("name", "")
         tool_input = tc.get("function", {}).get("arguments", {}) or tc.get("input", {})
+        
+        # Restore original tool name if it was shortened for Kiro API
+        if tool_name_mapping:
+            tool_name = restore_tool_name(tool_name, tool_name_mapping)
         
         if isinstance(tool_input, str):
             try:
@@ -873,7 +892,8 @@ async def stream_with_first_token_retry_anthropic(
     first_token_timeout: float = FIRST_TOKEN_TIMEOUT,
     request_messages: Optional[list] = None,
     request_tools: Optional[list] = None,
-    request_system: Optional[Any] = None
+    request_system: Optional[Any] = None,
+    tool_name_mapping: Optional[Dict[str, str]] = None
 ) -> AsyncGenerator[str, None]:
     """
     Streaming with automatic retry on first token timeout for Anthropic API.
@@ -896,6 +916,8 @@ async def stream_with_first_token_retry_anthropic(
         request_messages: Original request messages (for fallback token counting)
         request_tools: Original request tools (for fallback token counting)
         request_system: Original system prompt (for fallback token counting)
+        tool_name_mapping: Mapping of shortened_name → original_name for restoring
+                          original tool names in responses (optional)
     
     Yields:
         Strings in Anthropic SSE format
@@ -934,6 +956,7 @@ async def stream_with_first_token_retry_anthropic(
             request_messages=request_messages,
             request_tools=request_tools,
             request_system=request_system,
+            tool_name_mapping=tool_name_mapping,
         ):
             yield chunk
     

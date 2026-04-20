@@ -316,6 +316,12 @@ DEFAULT_MAX_INPUT_TOKENS: int = 200000
 # Set to 0 to disable (not recommended - will cause Kiro API errors).
 TOOL_DESCRIPTION_MAX_LENGTH: int = int(os.getenv("TOOL_DESCRIPTION_MAX_LENGTH", "10000"))
 
+# Maximum length of tool name in characters (Kiro API hard limit).
+# Tool names exceeding this limit are automatically shortened with a hash suffix
+# to preserve uniqueness, and a reverse mapping is applied to responses so
+# clients always see their original tool names.
+MAX_TOOL_NAME_LENGTH: int = 64
+
 # ==================================================================================================
 # Truncation Recovery Settings
 # ==================================================================================================

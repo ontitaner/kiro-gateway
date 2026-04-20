@@ -394,7 +394,7 @@ def build_kiro_payload(
     request_data: ChatCompletionRequest,
     conversation_id: str,
     profile_arn: str
-) -> dict:
+) -> Tuple[dict, Dict[str, str]]:
     """
     Builds complete payload for Kiro API from OpenAI request.
     
@@ -407,7 +407,9 @@ def build_kiro_payload(
         profile_arn: AWS CodeWhisperer profile ARN
     
     Returns:
-        Payload dictionary for POST request to Kiro API
+        Tuple of:
+        - Payload dictionary for POST request to Kiro API
+        - Tool name mapping (shortened_name → original_name), empty dict if no shortening
     
     Raises:
         ValueError: If there are no messages to send
@@ -443,4 +445,4 @@ def build_kiro_payload(
         thinking_config=thinking_config
     )
     
-    return result.payload
+    return result.payload, result.tool_name_mapping
