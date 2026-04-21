@@ -221,6 +221,11 @@ HIDDEN_MODELS: Dict[str, str] = {
     # Hidden in Kiro API but functional. Great for users who prefer it.
     "claude-3.7-sonnet": "CLAUDE_3_7_SONNET_20250219_V1_0",
     
+    # @AI_GENERATED
+    # Remap Opus 4.7 to Opus 4.6 - Claude Code sends opus-4.7 but Kiro only has 4.6
+    "claude-opus-4.7": "claude-opus-4.6",
+    # @AI_GENERATED: end
+    
     # Add other hidden/experimental models here as discovered.
     # Example: "claude-secret-model": "INTERNAL_SECRET_MODEL_ID",
 }
