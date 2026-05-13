@@ -41,6 +41,9 @@ from kiro.config import MAX_RETRIES, BASE_RETRY_DELAY, FIRST_TOKEN_MAX_RETRIES, 
 from kiro.auth import KiroAuthManager
 from kiro.utils import get_kiro_headers
 from kiro.network_errors import classify_network_error, get_short_error_message, NetworkErrorInfo
+# @AI_GENERATED
+from kiro.ssl_utils import get_httpx_verify
+# @AI_GENERATED: end
 
 
 class KiroHttpClient:
@@ -141,7 +144,13 @@ class KiroHttpClient:
                 timeout_config = httpx.Timeout(timeout=300.0)
                 logger.debug("Creating non-streaming HTTP client (timeout=300s)")
             
-            self.client = httpx.AsyncClient(timeout=timeout_config, follow_redirects=True)
+            self.client = httpx.AsyncClient(
+                timeout=timeout_config,
+                follow_redirects=True,
+                # @AI_GENERATED
+                verify=get_httpx_verify(),
+                # @AI_GENERATED: end
+            )
         return self.client
     
     async def close(self) -> None:

@@ -120,6 +120,33 @@ PROXY_API_KEY: str = os.getenv("PROXY_API_KEY", "my-super-secret-password-123")
 #   VPN_PROXY_URL=192.168.1.100:8080  (defaults to http://)
 VPN_PROXY_URL: str = os.getenv("VPN_PROXY_URL", "")
 
+# @AI_GENERATED
+# ==================================================================================================
+# SSL/TLS Settings (for enterprise environments with MITM proxies / custom CAs)
+# ==================================================================================================
+#
+# SSL certificate verification mode for requests to Kiro API (AWS endpoints).
+#
+# Why this exists:
+#   Corporate networks (Zscaler, Palo Alto, Fortinet, Kaspersky, etc.) often perform
+#   TLS inspection by intercepting HTTPS traffic with their own self-signed CA.
+#   Python's httpx uses the certifi bundle by default and rejects such certificates
+#   with: [SSL: CERTIFICATE_VERIFY_FAILED] self-signed certificate in certificate chain.
+#
+# Options (priority: SSL_CA_BUNDLE > SSL_VERIFY):
+#   1. SSL_CA_BUNDLE="/path/to/corp-ca.pem"  -> verify using custom CA bundle (RECOMMENDED)
+#   2. SSL_VERIFY="false"                    -> disable verification entirely (INSECURE)
+#   3. (unset)                               -> default strict verification via certifi
+#
+# How to obtain your corporate CA bundle:
+#   - Windows: export from "certmgr.msc" -> Trusted Root CAs -> Base64 .cer file
+#   - Or ask IT for the corporate root CA certificate
+#   - Or combine with certifi: cat $(python -m certifi) corp-ca.pem > combined-ca.pem
+SSL_VERIFY: bool = os.getenv("SSL_VERIFY", "true").lower() not in ("false", "0", "no", "off", "disabled")
+_raw_ca_bundle = _get_raw_env_value("SSL_CA_BUNDLE") or os.getenv("SSL_CA_BUNDLE", "")
+SSL_CA_BUNDLE: str = str(Path(_raw_ca_bundle).expanduser()) if _raw_ca_bundle else ""
+# @AI_GENERATED: end
+
 # ==================================================================================================
 # Kiro API Credentials
 # ==================================================================================================

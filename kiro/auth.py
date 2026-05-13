@@ -49,6 +49,9 @@ from kiro.config import (
     get_aws_sso_oidc_url,
 )
 from kiro.utils import get_machine_fingerprint
+# @AI_GENERATED
+from kiro.ssl_utils import get_httpx_verify
+# @AI_GENERATED: end
 
 
 # Supported SQLite token keys (searched in priority order)
@@ -694,7 +697,7 @@ class KiroAuthManager:
             "User-Agent": f"KiroIDE-0.7.45-{self._fingerprint}",
         }
         
-        async with httpx.AsyncClient(timeout=30) as client:
+        async with httpx.AsyncClient(timeout=30, verify=get_httpx_verify()) as client:
             response = await client.post(self._refresh_url, json=payload, headers=headers)
             response.raise_for_status()
             data = response.json()
@@ -811,7 +814,7 @@ class KiroAuthManager:
         logger.debug(f"AWS SSO OIDC refresh request: url={url}, sso_region={sso_region}, "
                      f"api_region={self._region}, client_id={self._client_id[:8]}...")
         
-        async with httpx.AsyncClient(timeout=30) as client:
+        async with httpx.AsyncClient(timeout=30, verify=get_httpx_verify()) as client:
             response = await client.post(url, json=payload, headers=headers)
             
             # Log response details for debugging (especially on errors)

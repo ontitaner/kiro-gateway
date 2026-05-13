@@ -77,6 +77,9 @@ from kiro.config import (
 )
 from kiro.auth import KiroAuthManager
 from kiro.cache import ModelInfoCache
+# @AI_GENERATED
+from kiro.ssl_utils import get_httpx_verify
+# @AI_GENERATED: end
 from kiro.model_resolver import ModelResolver
 from kiro.routes_openai import router as openai_router
 from kiro.routes_anthropic import router as anthropic_router
@@ -331,7 +334,10 @@ async def lifespan(app: FastAPI):
     app.state.http_client = httpx.AsyncClient(
         limits=limits,
         timeout=timeout,
-        follow_redirects=True
+        follow_redirects=True,
+        # @AI_GENERATED
+        verify=get_httpx_verify(),
+        # @AI_GENERATED: end
     )
     logger.info("Shared HTTP client created with connection pooling")
     
@@ -366,7 +372,7 @@ async def lifespan(app: FastAPI):
         list_models_url = f"{app.state.auth_manager.q_host}/ListAvailableModels"
         logger.debug(f"Fetching models from: {list_models_url}")
         
-        async with httpx.AsyncClient(timeout=30) as client:
+        async with httpx.AsyncClient(timeout=30, verify=get_httpx_verify()) as client:
             response = await client.get(
                 list_models_url,
                 headers=headers,
