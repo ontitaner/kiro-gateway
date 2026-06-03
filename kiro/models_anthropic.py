@@ -183,11 +183,20 @@ class AnthropicMessage(BaseModel):
     Message in Anthropic format.
 
     Attributes:
-        role: Message role (user or assistant)
+        role: Message role. The Anthropic spec only defines "user" and
+            "assistant", but some clients (e.g. Claude Code with OMC /
+            oh-my-claudecode SessionStart hooks) inject non-standard roles
+            such as "system" or "developer" directly into the messages array.
+            We accept any string here and let the conversion pipeline
+            (normalize_message_roles in converters_core) fold unknown roles
+            into "user" for Kiro API compatibility, instead of rejecting the
+            whole request with a 422 (fixes the OMC "system" role error).
         content: Message content (string or list of content blocks)
     """
 
-    role: Literal["user", "assistant"]
+    # @AI_GENERATED: relax role to accept non-standard roles (e.g. "system" from OMC hooks)
+    role: str
+    # @AI_GENERATED: end
     content: Union[str, List[ContentBlock]]
 
     model_config = {"extra": "allow"}
