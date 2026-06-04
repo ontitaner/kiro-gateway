@@ -28,4 +28,5 @@ requests/
 # Testing
 .pytest_cache/
 .coverage
-htmlcov/
+htmlcov/gateway.log
+nul
